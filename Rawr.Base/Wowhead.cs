@@ -226,10 +226,21 @@ namespace Rawr
             if (site.Equals("en")) site = "wotlk";
             WebRequestWrapper wrw = new WebRequestWrapper();
             XmlDocument docItem = wrw.DownloadItemWowhead(site, query);
-            if (docItem == null || docItem.InnerXml.Contains("Item not found!")) return null;
+            if (docItem == null) return null;
+            if (docItem.InnerXml.Contains("Item not found!"))
+            {
+                WebRequestWrapper.LogWowhead("Item not found: " + query);
+                return null;
+            }
+            // Wowhead uses a <wowhead> root, AoWoW style databases (like evowow) use <aowow>; the item payload is the same
+            XmlNode itemNode = docItem.DocumentElement != null ? docItem.DocumentElement.SelectSingleNode("item") : null;
+            if (itemNode == null)
+            {
+                WebRequestWrapper.LogWowhead("Unexpected response for: " + query);
+                return null;
+            }
             // the id from above can now be a name as well as the item number, so we regrab it from the data wowhead returned
-            int id = 0;
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item")) { id = int.Parse(node.Attributes["id"].Value); }
+            int id = int.Parse(itemNode.Attributes["id"].Value);
             Item item = new Item() { Id = id, Stats = new Stats() };
             string htmlTooltip = string.Empty;
             string json1s = string.Empty;
@@ -238,12 +249,12 @@ namespace Rawr
             string repLevel = string.Empty;
 
             #region Set Initial Data (Name, Quality, Unique, etc) and record the Tooltip, json & jsonequip sections
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item/name")) { item.Name = node.InnerText; }
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item/quality")) { item.Quality = (ItemQuality)int.Parse(node.Attributes["id"].Value); }
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item/icon")) { item.IconPath = node.InnerText; }
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item/htmlTooltip")) { htmlTooltip = node.InnerText; }
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item/json")) { json1s = node.InnerText; }
-            foreach (XmlNode node in docItem.SelectNodes("aowow/item/jsonEquip")) { json2s = node.InnerText; }
+            foreach (XmlNode node in itemNode.SelectNodes("name")) { item.Name = node.InnerText.Trim(); }
+            foreach (XmlNode node in itemNode.SelectNodes("quality")) { item.Quality = (ItemQuality)int.Parse(node.Attributes["id"].Value); }
+            foreach (XmlNode node in itemNode.SelectNodes("icon")) { item.IconPath = node.InnerText; }
+            foreach (XmlNode node in itemNode.SelectNodes("htmlTooltip")) { htmlTooltip = node.InnerText; }
+            foreach (XmlNode node in itemNode.SelectNodes("json")) { json1s = node.InnerText; }
+            foreach (XmlNode node in itemNode.SelectNodes("jsonEquip")) { json2s = node.InnerText; }
             if (htmlTooltip.Contains("Unique")) item.Unique = true;
 
             #endregion
@@ -276,8 +287,9 @@ namespace Rawr
             {
                 json = JsonParser.Merge(JsonParser.Parse(json1s), JsonParser.Parse(json2s));
             }
-            catch
+            catch (Exception ex)
             {
+                WebRequestWrapper.LogWowhead("Could not parse item " + query + ": " + ex.Message);
                 return null;
             }
 
@@ -486,9 +498,10 @@ namespace Rawr
                 item.SocketBonus = GetSocketBonus(tmp.ToString());
             }
             */
-            if (json.TryGetValue("nsockets", out tmp))
             {
-                int numSockets = Convert.ToInt32(tmp);
+                int numSockets = json.TryGetValue("nsockets", out tmp)
+                    ? Convert.ToInt32(tmp)
+                    : Regex.Matches(htmlTooltip, "class=\"socket-").Count;
                 var htmlCopy = htmlTooltip;
 
                 for(int i = 0; i < numSockets;  i++)
@@ -496,7 +509,7 @@ namespace Rawr
                     switch (i)
                     {
                         case 0:
-                            if (htmlCopy.Contains("<span class=\"socket-"))
+                            if (htmlCopy.Contains("class=\"socket-"))
                             {
                                 string[] sArray = FindSockets(htmlCopy);
                                 htmlCopy = sArray[1];
@@ -504,7 +517,7 @@ namespace Rawr
                             }
                             break;
                         case 1:
-                            if (htmlCopy.Contains("<span class=\"socket-"))
+                            if (htmlCopy.Contains("class=\"socket-"))
                             {
                                 string[] sArray = FindSockets(htmlCopy);
                                 htmlCopy = sArray[1];
@@ -512,7 +525,7 @@ namespace Rawr
                             }
                             break;
                         case 2:
-                            if (htmlCopy.Contains("<span class=\"socket-"))
+                            if (htmlCopy.Contains("class=\"socket-"))
                             {
                                 string[] sArray = FindSockets(htmlCopy);
                                 htmlCopy = sArray[1];
@@ -533,6 +546,16 @@ namespace Rawr
                     }
                     htmlCopy = htmlCopy.Remove(startPos, pos - startPos);
                     item.SocketBonus = GetSocketBonus(stringBuilder);
+                }
+                else
+                {
+                    // Wowhead renders the bonus as plain text instead of an enchantment link: "Socket Bonus: +7 Spell Power"
+                    Match socketBonusMatch = Regex.Match(htmlCopy, @"Socket Bonus:\s*\+?(\d+)\s+([^<]+)");
+                    if (socketBonusMatch.Success)
+                    {
+                        item.SocketBonus = GetSocketBonusFromText(Convert.ToInt32(socketBonusMatch.Groups[1].Value),
+                            socketBonusMatch.Groups[2].Value.Trim());
+                    }
                 }
             }
             if (json.TryGetValue("parryrtng", out tmp))
@@ -880,9 +903,11 @@ namespace Rawr
                             {
                                 #region We *really* haven't seen this before so we need to pull the data
                                 XmlDocument docToken = wrw.DownloadItemWowhead(site, tokenIds[i]);
-                                if (docToken != null)
+                                if (docToken != null && docToken.DocumentElement != null)
                                 {
-                                    tokenNames[i] = docToken.SelectSingleNode("wowhead/item/name").InnerText;
+                                    XmlNode tokenItemNode = docToken.DocumentElement.SelectSingleNode("item");
+                                    XmlNode tokenNameNode = tokenItemNode != null ? tokenItemNode.SelectSingleNode("name") : null;
+                                    if (tokenNameNode != null) tokenNames[i] = tokenNameNode.InnerText.Trim();
 
                                     // we don't want token => boss propagation anymore, otherwise you get weird stuff like 277 gloves dropping from Toravon
                                     /*string tokenJson = docToken.SelectSingleNode("wowhead/item/json").InnerText;
@@ -1432,14 +1457,16 @@ namespace Rawr
                 && item.Stats <= new Stats() { Armor = 99999, AttackPower = 99999, SpellPower = 99999, BlockValue = 99999 })
             { return null; }
 
+            WebRequestWrapper.LogWowhead("Loaded item " + item.Id + " '" + item.Name + "' (ilvl " + item.ItemLevel + ")");
             return item;
 
             string[] FindSockets(string htmlCopy)
             {
-                int startPos = htmlCopy.IndexOf("<span class=\"socket-");
-                int pos = startPos + 20;
+                // works both for AoWoW (<span class="socket-yellow ...">) and Wowhead (<a ... class="socket-yellow ...">)
+                int startPos = htmlCopy.IndexOf("class=\"socket-");
+                int pos = startPos + "class=\"socket-".Length;
                 string stringBuilder = "";
-                while (htmlCopy[pos] != ' ')
+                while (htmlCopy[pos] != ' ' && htmlCopy[pos] != '"' && htmlCopy[pos] != '>')
                 {
                     stringBuilder += htmlCopy[pos];
                     pos++;
@@ -2308,6 +2335,45 @@ namespace Rawr
             return stats;
         }
 
+        /// <summary>
+        /// Parses the plain text socket bonus used by Wowhead, e.g. "+7 Spell Power".
+        /// </summary>
+        private static Stats GetSocketBonusFromText(int value, string statName)
+        {
+            Stats stats = new Stats();
+            switch (statName.ToLowerInvariant())
+            {
+                case "strength": stats.Strength += value; break;
+                case "agility": stats.Agility += value; break;
+                case "stamina": stats.Stamina += value; break;
+                case "intellect": stats.Intellect += value; break;
+                case "spirit": stats.Spirit += value; break;
+                case "health": stats.Health += value; break;
+                case "mana": stats.Mana += value; break;
+                case "health per 5 sec":
+                case "health per 5 sec.": stats.Hp5 += value; break;
+                case "mana per 5 sec":
+                case "mana per 5 sec.": stats.Mp5 += value; break;
+                case "armor": stats.Armor += value; break;
+                case "bonus armor": stats.BonusArmor += value; break;
+                case "defense rating": stats.DefenseRating += value; break;
+                case "block value": stats.BlockValue += value; break;
+                case "block rating": stats.BlockRating += value; break;
+                case "dodge rating": stats.DodgeRating += value; break;
+                case "parry rating": stats.ParryRating += value; break;
+                case "resilience rating": stats.Resilience += value; break;
+                case "attack power": stats.AttackPower += value; break;
+                case "spell power": stats.SpellPower += value; break;
+                case "expertise rating": stats.ExpertiseRating += value; break;
+                case "hit rating": stats.HitRating += value; break;
+                case "critical strike rating": stats.CritRating += value; break;
+                case "haste rating": stats.HasteRating += value; break;
+                case "armor penetration rating": stats.ArmorPenetrationRating += value; break;
+                case "spell penetration": stats.SpellPenetration += value; break;
+            }
+            return stats;
+        }
+
         private static ItemType GetItemType(string classSubclass)
         {
             switch (classSubclass)
@@ -2803,7 +2869,7 @@ namespace Rawr
 
         public static String GetWowheadWeightedReportURL(Character character)
         {
-            return "http://wotlk.evowow.com/?items&filter=minrl=" + character.Level + ";" + getWowheadClassFilter(character.Class) + getWowheadWeightFilter(character);
+            return "https://www.wowhead.com/wotlk/items?filter=minrl=" + character.Level + ";" + getWowheadClassFilter(character.Class) + getWowheadWeightFilter(character);
         }
 
         private static string getWowheadClassFilter(CharacterClass className)

@@ -19,10 +19,112 @@ namespace Rawr
         //5 seems to be the magic number when the armory is acting up.
         private const int RETRY_MAX = 5;
 
+        // after this many failed requests in a row, the rest of the batch is skipped
+        private const int MAX_CONSECUTIVE_FAILURES = 5;
+
+        // how long to skip requests after tripping the breaker before allowing a retry
+        private const int BREAKER_COOLDOWN_SECONDS = 60;
+
+        // how long a single HTTP request may take before it is aborted (prevents hanging forever)
+        private const int HTTP_TIMEOUT_MS = 20000;
+
+        // AoWoW mirror of the WotLK item database, used when Wowhead's WAF blocks us (403)
+        private const string WOWHEAD_FALLBACK_ITEM_URI = "https://wotlk.evowow.com/?item={1}&xml";
+
         public const string CONTENT_XML = "application/xml";
         public const string CONTENT_JPG = "image/jpeg";
         public const string CONTENT_PNG = "image/png";
         public const string CONTENT_GIF = "image/gif";
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool AttachConsole(int dwProcessId);
+
+        private static Semaphore _requestSlots;
+        private static int _consecutiveFailures = 0;
+        private static DateTime _breakerTrippedAt = DateTime.MinValue;
+        private static bool _wowheadBlocked = false;
+
+        static WebRequestWrapper()
+        {
+            // A WinForms app has no console of its own; attach to the console it was launched from
+            // so the network fetch log is visible (under Wine stdout already goes to the terminal).
+            try { AttachConsole(-1); } catch { }
+
+            // Cap how many requests can be in flight at once; without this the thread pool spawns
+            // hundreds of threads that all block when the remote host stops responding.
+            int maxConnections = NetworkSettingsProvider != null ? NetworkSettingsProvider.MaxHttpRequests : 4;
+            if (maxConnections < 1) maxConnections = 1;
+            if (maxConnections > 8) maxConnections = 8;
+            _requestSlots = new Semaphore(maxConnections, maxConnections);
+            ServicePointManager.DefaultConnectionLimit = maxConnections;
+        }
+
+        /// <summary>
+        /// Writes a network fetch message to the console, the debug trace and Rawrlog.txt.
+        /// </summary>
+        public static void LogWowhead(string message)
+        {
+            string line = "[Wowhead] " + DateTime.Now.ToString("HH:mm:ss") + " " + message;
+            try { Console.WriteLine(line); } catch { }
+            try { System.Diagnostics.Trace.WriteLine(line); } catch { }
+            try { Log.Write(line); } catch { }
+        }
+
+        /// <summary>
+        /// After a fatal network error (e.g. a 403/407) all remaining requests in the batch are
+        /// short-circuited; this logs that so the fetch log does not look like real GETs were made.
+        /// </summary>
+        private static bool SkipIfNetworkDisabled(string what)
+        {
+            bool circuitTripped = CircuitTripped;
+            if (LastWasFatalError || circuitTripped)
+            {
+                string reason = circuitTripped ? "too many consecutive failures (cooling down)" : LastErrorText();
+                LogWowhead("SKIPPED " + what + " - " + reason);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// True while the consecutive-failure breaker is tripped. After a cooldown it lets a
+        /// single request through again so the app can recover without a restart.
+        /// </summary>
+        private static bool CircuitTripped
+        {
+            get
+            {
+                if (_consecutiveFailures < MAX_CONSECUTIVE_FAILURES) return false;
+                if ((DateTime.Now - _breakerTrippedAt).TotalSeconds < BREAKER_COOLDOWN_SECONDS) return true;
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Tracks consecutive failed requests; after MAX_CONSECUTIVE_FAILURES the rest of the batch
+        /// is skipped so the app cannot pile up threads on a dead or throttled connection.
+        /// </summary>
+        private static void RecordRequestResult(bool success)
+        {
+            if (success)
+            {
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
+                return;
+            }
+            int failures = Interlocked.Increment(ref _consecutiveFailures);
+            if (failures == MAX_CONSECUTIVE_FAILURES)
+            {
+                _breakerTrippedAt = DateTime.Now;
+                LogWowhead("Too many consecutive failures (" + failures + ") - skipping the rest of this batch");
+            }
+        }
+
+        private static string LastErrorText()
+        {
+            Exception e = Error != null ? Error : FatalError;
+            return e == null ? "unknown error" : e.Message;
+        }
 
 		private class DownloadRequest
 		{
@@ -253,7 +355,10 @@ namespace Rawr
 
 		public WebRequestWrapper()
 		{
-            ResetFatalErrorIndicator();//Added to test fix for creating directories.
+            // Don't call ResetFatalErrorIndicator() here: it would also clear the consecutive-failure
+            // counter, and a new wrapper is created for every item that gets fetched.
+            _fatalError = null;
+            _error = null;
             int maxConnections = NetworkSettingsProvider.MaxHttpRequests;
 			_failedRequests = new List<DownloadRequest>();
 			_webRequestThreads = new Thread[maxConnections];
@@ -400,10 +505,32 @@ namespace Rawr
         public XmlDocument DownloadItemWowhead(string id) { return DownloadItemWowhead("wotlk", id); }
         public XmlDocument DownloadItemWowhead(string site, string id)
 		{
-			XmlDocument doc = null;
+            XmlDocument doc = null;
             if (!string.IsNullOrEmpty(site) && !string.IsNullOrEmpty(id))
 			{
-				doc = DownloadXml(string.Format(NetworkSettingsProvider.ItemWowheadURI, site, id), true, false);
+                if (SkipIfNetworkDisabled("item " + id)) return doc;
+                if (!_wowheadBlocked)
+                {
+                    string url = string.Format(NetworkSettingsProvider.ItemWowheadURI, site, id);
+                    LogWowhead("GET item " + id + " -> " + url);
+                    try { doc = DownloadXml(url, true, false); }
+                    catch (Exception ex) { CheckExceptionForFatalError(ex); RecordRequestResult(false); doc = null; }
+                    if (doc == null && LastErrorText().Contains("403"))
+                    {
+                        _wowheadBlocked = true; // stop trying Wowhead for the rest of this operation
+                        LogWowhead("Wowhead is blocking this IP (403) - switching to wotlk.evowow.com for this batch");
+                    }
+                }
+                if (doc == null)
+                {
+                    // Wowhead's WAF blocks bulk tools; evowow serves the same item data in AoWoW XML
+                    ClearFatalError();
+                    string fallbackUrl = string.Format(WOWHEAD_FALLBACK_ITEM_URI, site, id);
+                    LogWowhead("GET item " + id + " (fallback) -> " + fallbackUrl);
+                    try { doc = DownloadXml(fallbackUrl, true, false); }
+                    catch (Exception ex) { CheckExceptionForFatalError(ex); RecordRequestResult(false); doc = null; }
+                }
+                LogWowhead(doc == null ? "FAILED item " + id + " - " + LastErrorText() : "OK item " + id);
 			}
 			return doc;
 		}
@@ -414,7 +541,11 @@ namespace Rawr
             string doc = null;
             if (!string.IsNullOrEmpty(site) && !string.IsNullOrEmpty(filter))
             {
-                doc = DownloadText(string.Format(NetworkSettingsProvider.ItemWowheadUpgradeURI, site, filter));
+                if (SkipIfNetworkDisabled("upgrade list")) return doc;
+                string url = string.Format(NetworkSettingsProvider.ItemWowheadUpgradeURI, site, filter);
+                LogWowhead("GET upgrade list -> " + url);
+                doc = DownloadText(url);
+                LogWowhead(doc == null ? "FAILED upgrade list - " + LastErrorText() : "OK upgrade list (" + doc.Length + " chars)");
             }
             return doc;
         }
@@ -425,7 +556,11 @@ namespace Rawr
             string doc = null;
             if (!string.IsNullOrEmpty(id))
             {
-                doc = DownloadText(string.Format(NetworkSettingsProvider.QuestWowheadURI, id));
+                if (SkipIfNetworkDisabled("quest " + id)) return doc;
+                string url = string.Format(NetworkSettingsProvider.QuestWowheadURI, id);
+                LogWowhead("GET quest " + id + " -> " + url);
+                doc = DownloadText(url);
+                LogWowhead(doc == null ? "FAILED quest " + id + " - " + LastErrorText() : "OK quest " + id);
             }
             return doc;
         }
@@ -436,7 +571,11 @@ namespace Rawr
             if (!string.IsNullOrEmpty(id))
             {
                 //doc = DownloadXml(string.Format("http://www.wowhead.com/?item={0}", id), true, true);
-                doc = DownloadXml(string.Format("http://wotlk.evowow.com/?item={0}", id), true, true);
+                if (SkipIfNetworkDisabled("vendor page " + id)) return doc;
+                string url = string.Format("http://wotlk.evowow.com/?item={0}", id);
+                LogWowhead("GET vendor page -> " + url);
+                doc = DownloadXml(url, true, true);
+                LogWowhead(doc == null ? "FAILED vendor page " + id + " - " + LastErrorText() : "OK vendor page " + id);
             }
             return doc;
         }
@@ -446,7 +585,11 @@ namespace Rawr
             XmlDocument doc = null;
             if (!string.IsNullOrEmpty(id))
             {
-                doc = DownloadXml(string.Format("http://wotlk.evowow.com/?quest={0}", id), true, true);
+                if (SkipIfNetworkDisabled("quest page " + id)) return doc;
+                string url = string.Format("http://wotlk.evowow.com/?quest={0}", id);
+                LogWowhead("GET quest page -> " + url);
+                doc = DownloadXml(url, true, true);
+                LogWowhead(doc == null ? "FAILED quest page " + id + " - " + LastErrorText() : "OK quest page " + id);
             }
             return doc;
         }
@@ -574,7 +717,19 @@ namespace Rawr
 		{
 			_fatalError = null;
             _error = null;
+            _wowheadBlocked = false;
+            Interlocked.Exchange(ref _consecutiveFailures, 0);
 		}
+
+        /// <summary>
+        /// Clears the last error without touching the failure counter, so a fallback host can be
+        /// tried after Wowhead returned a 403.
+        /// </summary>
+        private static void ClearFatalError()
+        {
+            _fatalError = null;
+            _error = null;
+        }
 
 		/// <summary>
 		/// Downloads an Icon Asyncronously
@@ -615,6 +770,7 @@ namespace Rawr
         private class CookieWebClient : WebClient
         {
             private CookieContainer cookieContainer = new CookieContainer();
+            public HttpWebRequest LastRequest;
 
             protected override WebRequest GetWebRequest(Uri address)
             {
@@ -623,6 +779,9 @@ namespace Rawr
                 if (httpRequest != null)
                 {
                     httpRequest.CookieContainer = cookieContainer;
+                    httpRequest.Timeout = HTTP_TIMEOUT_MS;
+                    httpRequest.ReadWriteTimeout = HTTP_TIMEOUT_MS;
+                    LastRequest = httpRequest;
                 }
                 return request;
             }
@@ -631,10 +790,19 @@ namespace Rawr
 		/// <summary>
 		/// Used to create a web client with all of the appropriote proxy/useragent/etc settings
 		/// </summary>
-		private WebClient CreateWebClient()
+		private CookieWebClient CreateWebClient()
 		{
-			WebClient client = new CookieWebClient() { Encoding = Encoding.UTF8 };
+            ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; //TLS 1.2, required by Wowhead and other modern hosts
+			CookieWebClient client = new CookieWebClient() { Encoding = Encoding.UTF8 };
 			client.Headers.Add("user-agent", NetworkSettingsProvider.UserAgent);
+            // Wowhead's WAF blocks requests that don't look like a browser navigation,
+            // even when the User-Agent is a real one (returns 403 "Request blocked").
+            client.Headers.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            client.Headers.Add("Accept-Language", "en-US,en;q=0.9");
+            client.Headers.Add("Upgrade-Insecure-Requests", "1");
+            client.Headers.Add("Sec-Fetch-Dest", "document");
+            client.Headers.Add("Sec-Fetch-Mode", "navigate");
+            client.Headers.Add("Sec-Fetch-Site", "none");
             if (NetworkSettingsProvider.ProxyType == "Http")
 			{
 				if (_useDefaultProxy)
@@ -678,45 +846,82 @@ namespace Rawr
             //occasionally a zero byte file slips through without throwing an exception
 			if (!File.Exists(localPath) || new FileInfo(localPath).Length <= 0)
 			{
-				do
-				{
-					if (!LastWasFatalError)
-					{
-						if (!Directory.Exists(Path.GetDirectoryName(localPath)))
-						{
-							Directory.CreateDirectory(Path.GetDirectoryName(localPath));
-						}
-						using (WebClient client = CreateWebClient())
-						{
-							try
-							{
-								client.DownloadFile(URI, localPath);
-                                if(!client.ResponseHeaders[HttpResponseHeader.ContentType].StartsWith(contentType))
+                if (!_requestSlots.WaitOne(HTTP_TIMEOUT_MS * 2, false))
+                {
+                    CheckExceptionForFatalError(new TimeoutException("Timed out waiting for a free request slot"));
+                    RecordRequestResult(false);
+                    return;
+                }
+                try
+                {
+                    do
+                    {
+                        if (!LastWasFatalError)
+                        {
+                            if (!Directory.Exists(Path.GetDirectoryName(localPath)))
+                            {
+                                Directory.CreateDirectory(Path.GetDirectoryName(localPath));
+                            }
+                            using (CookieWebClient client = CreateWebClient())
+                            {
+                                try
                                 {
-                                    throw new Exception("Invalid Content Type or Address Invalid.");
+                                    DownloadFileWithTimeout(client, URI, localPath);
+                                    if(!client.ResponseHeaders[HttpResponseHeader.ContentType].StartsWith(contentType))
+                                    {
+                                        throw new Exception("Invalid Content Type or Address Invalid.");
+                                    }
+                                    success = true;
+                                    RecordRequestResult(true);
                                 }
-                                success = true;
-							}
-							catch (Exception ex)
-							{
-								CheckExceptionForFatalError(ex);
-								//if on a client file download, there is an exception, 
-								//it will create a 0 byte file. We don't want that empty file.
-								if (File.Exists(localPath))
-								{
-									File.Delete(localPath);
-								}
-								retry++;
-								if (retry == RETRY_MAX || LastWasFatalError)
-								{
-									throw;
-								}
-							}
-						}
-					}
-				} while (retry <= RETRY_MAX && !success && !LastWasFatalError);
+                                catch (Exception ex)
+                                {
+                                    CheckExceptionForFatalError(ex);
+                                    RecordRequestResult(false);
+                                    //if on a client file download, there is an exception, 
+                                    //it will create a 0 byte file. We don't want that empty file.
+                                    if (File.Exists(localPath))
+                                    {
+                                        File.Delete(localPath);
+                                    }
+                                    retry++;
+                                    if (retry == RETRY_MAX || LastWasFatalError)
+                                    {
+                                        throw;
+                                    }
+                                }
+                            }
+                        }
+                    } while (retry <= RETRY_MAX && !success && !LastWasFatalError);
+                }
+                finally
+                {
+                    _requestSlots.Release();
+                }
 			}
 		}
+
+        /// <summary>
+        /// Downloads a file on a dedicated thread and aborts the request after HTTP_TIMEOUT_MS.
+        /// </summary>
+        private static void DownloadFileWithTimeout(CookieWebClient client, string URI, string localPath)
+        {
+            Exception error = null;
+            Thread downloadThread = new Thread(delegate()
+            {
+                try { client.DownloadFile(URI, localPath); }
+                catch (Exception ex) { error = ex; }
+            });
+            downloadThread.IsBackground = true;
+            downloadThread.Start();
+            if (!downloadThread.Join(HTTP_TIMEOUT_MS))
+            {
+                HttpWebRequest request = client.LastRequest;
+                if (request != null) { try { request.Abort(); } catch { } }
+                throw new TimeoutException("Request timed out after " + HTTP_TIMEOUT_MS + " ms");
+            }
+            if (error != null) throw error;
+        }
 
 		/// <summary>
 		/// This is used to prevent multiple attempts at network traffic when its not working and 
@@ -741,31 +946,73 @@ namespace Rawr
 
 		public string DownloadText(string URI)
 		{
-			WebClient webClient = CreateWebClient();
 			string value = null;
 			int retry = 0;
 			bool success = false;
-			do
-			{
-				if (!LastWasFatalError)
-				{
-					try
-					{
-						value = webClient.DownloadString(URI);
-						if (!String.IsNullOrEmpty(value))
-						{
-							success = true;
-						}
-					}
-					catch (Exception ex)
-					{
-						CheckExceptionForFatalError(ex);
-					}
-				}
-				retry++;
-			} while (retry <= RETRY_MAX && !success && !LastWasFatalError);
+            // never wait forever for a free slot, otherwise threads pile up on a dead connection
+            if (!_requestSlots.WaitOne(HTTP_TIMEOUT_MS * 2, false))
+            {
+                CheckExceptionForFatalError(new TimeoutException("Timed out waiting for a free request slot"));
+                RecordRequestResult(false);
+                return null;
+            }
+            try
+            {
+                do
+                {
+                    if (!LastWasFatalError)
+                    {
+                        try
+                        {
+                            value = DownloadStringWithTimeout(URI);
+                            if (!String.IsNullOrEmpty(value))
+                            {
+                                success = true;
+                                RecordRequestResult(true);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            CheckExceptionForFatalError(ex);
+                            RecordRequestResult(false);
+                        }
+                    }
+                    retry++;
+                } while (retry <= RETRY_MAX && !success && !LastWasFatalError);
+            }
+            finally
+            {
+                _requestSlots.Release();
+            }
 			return value;
 		}
+
+        /// <summary>
+        /// Downloads a string on a dedicated thread and aborts the request after HTTP_TIMEOUT_MS.
+        /// Mono's HttpWebRequest.Timeout does not fire for stalled HTTPS/TLS requests, which is what
+        /// made whole cache updates hang forever, so the abort is enforced here.
+        /// </summary>
+        private string DownloadStringWithTimeout(string URI)
+        {
+            CookieWebClient webClient = CreateWebClient();
+            string result = null;
+            Exception error = null;
+            Thread downloadThread = new Thread(delegate()
+            {
+                try { result = webClient.DownloadString(URI); }
+                catch (Exception ex) { error = ex; }
+            });
+            downloadThread.IsBackground = true;
+            downloadThread.Start();
+            if (!downloadThread.Join(HTTP_TIMEOUT_MS))
+            {
+                HttpWebRequest request = webClient.LastRequest;
+                if (request != null) { try { request.Abort(); } catch { } }
+                throw new TimeoutException("Request timed out after " + HTTP_TIMEOUT_MS + " ms");
+            }
+            if (error != null) throw error;
+            return result;
+        }
 
 		private XmlDocument DownloadXml(string URI) { return DownloadXml(URI, false, false); }
 		private XmlDocument DownloadXml(string URI, bool allowTable, bool isHtml)
@@ -806,6 +1053,7 @@ namespace Rawr
                     }
                     catch (Exception ex)
                     {
+                        RecordRequestResult(false);
                         throw ex;
                     }
                 }

@@ -146,8 +146,8 @@ namespace Rawr.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("Mozilla/5.0 (Windows; U; Windows NT 6.0; en-US; rv:1.8.1.4) Gecko/20070515 Firefo" +
-            "x/2.0.0.4")]
+        [global::System.Configuration.DefaultSettingValueAttribute("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/126.0.0.0 Safari/537.36")]
         public string UserAgent {
             get {
                 return ((string)(this["UserAgent"]));
@@ -270,7 +270,7 @@ namespace Rawr.Properties {
         
         [global::System.Configuration.ApplicationScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("http://{0}.evowow.com/?item={1}&xml")]
+        [global::System.Configuration.DefaultSettingValueAttribute("https://www.wowhead.com/wotlk/?item={1}&xml")]
         public string ItemWowheadURI {
             get {
                 return ((string)(this["ItemWowheadURI"]));
@@ -288,7 +288,7 @@ namespace Rawr.Properties {
         
         [global::System.Configuration.ApplicationScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("http://{0}.wowhead.com/?items&filter={1}")]
+        [global::System.Configuration.DefaultSettingValueAttribute("https://wotlk.evowow.com/?items&filter={1}")]
         public string ItemWowheadUpgradeURI {
             get {
                 return ((string)(this["ItemWowheadUpgradeURI"]));
@@ -309,7 +309,7 @@ namespace Rawr.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("http://www.wowhead.com/?quest={0}")]
+        [global::System.Configuration.DefaultSettingValueAttribute("https://www.wowhead.com/wotlk/?quest={0}")]
         public string QuestWowheadURI {
             get {
                 return ((string)(this["QuestWowheadURI"]));

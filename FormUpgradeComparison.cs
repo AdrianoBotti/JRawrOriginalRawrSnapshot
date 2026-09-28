@@ -17,6 +17,8 @@ namespace Rawr
         private FormUpgradeComparison()
         {
             InitializeComponent();
+            // Mono's ToolStrip.UpdateToolTip throws GDI+ InvalidParameter under Wine; disable hover tooltips
+            toolStripItemComparison.ShowItemToolTips = false;
 			if (Type.GetType("Mono.Runtime") != null) 
 				copyDataToClipboardToolStripMenuItem.Text += " (Doesn't work under Mono)";
         }

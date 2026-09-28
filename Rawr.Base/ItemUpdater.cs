@@ -54,6 +54,8 @@ namespace Rawr
 
         private Queue<ItemToUpdate> itemQueue;
         private int itemsPerSecond;
+        private Stopwatch rateWatch;
+        private long nextDispatchAllowed;
 
         public ItemUpdater(bool multiThreaded, bool useArmory, bool usePTR, int itemsPerSecond, Wowhead.UpgradeCancelCheck check )
         {
@@ -70,59 +72,63 @@ namespace Rawr
             this.lockObject = new Object();
             this.itemsPerSecond = itemsPerSecond;
             this.itemQueue = new Queue<ItemToUpdate>();
+            this.rateWatch = new Stopwatch();
+            this.rateWatch.Start();
 
             if (multiThreaded)
             {
-                // Thread t = new Thread(new ThreadStart(Throttle));
-				ThreadPool.QueueUserWorkItem(Throttle);
-                // t.Start();
+                // Use a small fixed set of dedicated background threads instead of queueing every item
+                // onto the .NET thread pool. Queueing thousands of items makes the pool grow to its
+                // maximum thread count and it then stops completing the update (observed deadlock).
+                int workerCount = Math.Min(Math.Max(itemsPerSecond, 1), 5);
+                for (int i = 0; i < workerCount; i++)
+                {
+                    Thread worker = new Thread(new ThreadStart(WorkerLoop));
+                    worker.IsBackground = true;
+                    worker.Name = "ItemUpdater worker " + i;
+                    worker.Start();
+                }
             }
         }
 
-        private void Throttle(object e)
+        private void WorkerLoop()
         {
-            Stopwatch stopwatch = new Stopwatch(); ;
-            stopwatch.Start();
-
             while (!Done)
             {
-                long before = stopwatch.ElapsedMilliseconds;
-
-                for (int i = 0; i < itemsPerSecond || itemsPerSecond == 0; i++)
+                ItemToUpdate info = null;
+                lock (lockObject)
                 {
-					if (Done)
-					    return;
-
-                	ItemToUpdate info = null;
-                    lock (lockObject)
+                    while (itemQueue.Count == 0 && !finishedInput)
                     {
-                        if (itemQueue.Count == 0) break;
-                        info = itemQueue.Dequeue();
+                        if (Done) return;
+                        Monitor.Wait(lockObject, 500);
                     }
-                    if (multiThreaded)
-                    {
-                        ThreadPool.QueueUserWorkItem(LoadItem, info);
-                    }
-                    else
-                    {
-                        LoadItem(info);
-                        Interlocked.Increment(ref itemsDone);
-                    }
+                    if (Done) return;
+                    if (itemQueue.Count == 0) return; // input finished and nothing left to do
+                    info = itemQueue.Dequeue();
                 }
-
-                long elapsed = stopwatch.ElapsedMilliseconds - before;                
-
-                if (elapsed < 1000) Thread.Sleep((int)(1000 - elapsed));
+                WaitForRateLimit();
+                LoadItem(info);
             }
+        }
+
+        private void WaitForRateLimit()
+        {
+            if (itemsPerSecond <= 0) return;
+            long wait;
+            lock (lockObject)
+            {
+                long now = rateWatch.ElapsedMilliseconds;
+                long interval = 1000 / Math.Max(itemsPerSecond, 1);
+                long next = nextDispatchAllowed > now ? nextDispatchAllowed : now;
+                wait = next - now;
+                nextDispatchAllowed = next + interval;
+            }
+            if (wait > 0) Thread.Sleep((int)wait);
         }
 
         private void LoadItem(object state)
         {
-            // check done status
-            if( Done )
-                return;
-
-            // continue updating
             ItemToUpdate info = state as ItemToUpdate;
             Item i = null;
 
@@ -146,12 +152,12 @@ namespace Rawr
 
             lock (lockObject)
             {
-                if (i != null /* && (i.Stats.ToString().Contains(",") || (i.Stats.Armor + i.Stats.BonusArmor == 0 && i.Stats.ToString().Length > 0))*/)
-                {
-                    newItems.Add(info.index, i);
-                }
+                // indexer instead of Add, so a duplicate index can never kill a worker and leave
+                // the update waiting forever for an item that will never be counted
+                if (i != null) newItems[info.index] = i;
                 itemsDone++;
                 completelyDone = done = finishedInput && itemsDone == itemsToDo;
+                Monitor.PulseAll(lockObject);
             }
 
             if (completelyDone) eventDone.Set();
@@ -179,7 +185,7 @@ namespace Rawr
                 }
                 if (i != null)
                 {
-                    newItems.Add(index, i);
+                    newItems[index] = i;
                 }
                 return;
             }
@@ -193,6 +199,7 @@ namespace Rawr
             {
                 itemsToDo++;
                 itemQueue.Enqueue(info);
+                Monitor.Pulse(lockObject);
             }
         }
 
@@ -201,11 +208,15 @@ namespace Rawr
             if (!multiThreaded)
             {
                 done = true;
+                return;
             }
             lock (lockObject)
             {
                 finishedInput = true;
+                if (itemsToDo == 0) done = true;
+                Monitor.PulseAll(lockObject);
             }
+            if (done) eventDone.Set();
         }
 
         public void WaitUntilDone()

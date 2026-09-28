@@ -429,16 +429,7 @@ namespace Rawr
 
 		void _menuItemWowhead_Click(object sender, EventArgs e)
 		{
-            string site = Properties.GeneralSettings.Default.Locale;
-            if (site == "en")
-            {
-                if (FormMain.Instance.IsUsingPTR())
-                    //site = "ptr";
-                    site = "wotlk";
-                else
-                    site = "wotlk";
-            }
-            Help.ShowHelp(null, "http://" + site + ".evowow.com/?item=" + _item.Id);
+            Help.ShowHelp(null, "https://www.wowhead.com/wotlk/item=" + _item.Id);
 		}
         void _menuItemArmory_Click(object sender, EventArgs e)
         {

@@ -96,6 +96,9 @@ namespace Rawr
             
             LoadModel(ConfigModel);
             InitializeComponent();
+            // Mono's ToolStrip.UpdateToolTip converts the cursor icon through GDI+ on every mouse move,
+            // which throws "InvalidParameter" under Wine. Disabling the item tooltips avoids that crash.
+            toolStripItemComparison.ShowItemToolTips = false;
             _defaultColor = itemButtonHead.BackColor;
             if (Type.GetType("Mono.Runtime") != null)
                 copyDataToClipboardToolStripMenuItem.Text += " (Doesn't work under Mono)";

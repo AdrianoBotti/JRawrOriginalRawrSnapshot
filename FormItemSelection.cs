@@ -81,6 +81,8 @@ namespace Rawr
 		public FormItemSelection()
 		{
 			InitializeComponent();
+            // Mono's ToolStrip.UpdateToolTip throws GDI+ InvalidParameter under Wine; disable hover tooltips
+            toolStripItemComparison.ShowItemToolTips = false;
 
 			overallToolStripMenuItem.Tag = -1;
 			alphabeticalToolStripMenuItem.Tag = -2;

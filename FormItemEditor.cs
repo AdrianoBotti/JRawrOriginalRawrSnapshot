@@ -408,8 +408,8 @@ namespace Rawr
                 {
                     // need to add + where the spaces are
                     string wowhead_name = name.Replace(' ', '+');
-                    // we can now pass it through the normal URI
-                    newItem = Wowhead.GetItem(wowhead_name + ".0.0.0", true);
+                    // Wowhead's WotLK Classic database resolves names directly (the old ".0.0.0" suffix no longer works)
+                    newItem = Wowhead.GetItem(wowhead_name, true);
                     if (newItem != null) ItemCache.AddItem(newItem, true);
                 }
             }

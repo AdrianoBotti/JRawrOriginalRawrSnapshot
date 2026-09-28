@@ -12,8 +12,8 @@ namespace Rawr
             {
                 String input = textItemId.Text;
 
-                //Regex wowhead = new Regex(@"http://www.wowhead.com/\?item=([-+]?\d+)");
-                Regex wowhead = new Regex(@"http://wotlk.evowow.com/\?item=([-+]?\d+)");
+                // Accepts links such as https://www.wowhead.com/wotlk/item=40395 or https://wotlk.evowow.com/?item=40395
+                Regex wowhead = new Regex(@"(?:wowhead|evowow)\.com/(?:wotlk/)?\?item=([-+]?\d+)");
                 Match m = wowhead.Match(input);
 
                 if (m.Success)
@@ -21,9 +21,8 @@ namespace Rawr
                     return int.Parse(m.Groups[1].Value);
                 }
 
-                //Regex wowheadptr = new Regex(@"http://ptr.wowhead.com/\?item=([-+]?\d+)");
-                Regex wowheadptr = new Regex(@"http://wotlk.evowow.com/\?item=([-+]?\d+)");
-                m = wowheadptr.Match(input);
+                Regex wowheaditem = new Regex(@"(?:wowhead|evowow)\.com/(?:wotlk/)?item=([-+]?\d+)");
+                m = wowheaditem.Match(input);
 
                 if (m.Success)
                 {

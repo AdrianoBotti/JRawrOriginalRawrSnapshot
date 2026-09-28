@@ -37,7 +37,7 @@
       <Value Profile="(Default)">Mozilla/5.0 (Windows; U; Windows NT 6.0; en-US; rv:1.8.1.4) Gecko/20070515 Firefox/2.0.0.4</Value>
     </Setting>
     <Setting Name="UserAgent" Type="System.String" Scope="User">
-      <Value Profile="(Default)">Mozilla/5.0 (Windows; U; Windows NT 6.0; en-US; rv:1.8.1.4) Gecko/20070515 Firefox/2.0.0.4</Value>
+      <Value Profile="(Default)">Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36</Value>
     </Setting>
     <Setting Name="ClassTalentURI" Type="System.String" Scope="Application">
       <Value Profile="(Default)">http://www.worldofwarcraft.com/shared/global/talents/{0}/data.js</Value>
@@ -74,21 +74,22 @@
       <Value Profile="(Default)" />
     </Setting>
     <Setting Name="ItemWowheadURI" Type="System.String" Scope="Application">
-      <!--<Value Profile="(Default)">http://{0}.wowhead.com/?item={1}&amp;xml</Value>-->
-      <Value Profile="(Default)">http://{0}.evowow.com/?item={1}&amp;xml</Value>
+      <!-- Wowhead's WotLK Classic database still serves the legacy XML at /wotlk/ -->
+      <Value Profile="(Default)">https://www.wowhead.com/wotlk/?item={1}&amp;xml</Value>
     </Setting>
     <Setting Name="ItemSearchURI" Type="System.String" Scope="Application">
       <Value Profile="(Default)">http://{0}.wowarmory.com/search.xml?searchQuery={1}&amp;searchType=items</Value>
     </Setting>
     <Setting Name="ItemWowheadUpgradeURI" Type="System.String" Scope="Application">
-      <Value Profile="(Default)">http://{0}.wowhead.com/?items&amp;filter={1}</Value>
+      <!-- Upgrade list scraping depends on the AoWoW-style HTML, so it stays on evowow -->
+      <Value Profile="(Default)">https://wotlk.evowow.com/?items&amp;filter={1}</Value>
     </Setting>
     <Setting Name="ArmoryTalentIconURI" Type="System.String" Scope="User">
       <!--<Value Profile="(Default)">http://www.wowarmory.com/wow-icons/_images/_talents31x31/{0}</Value>-->
       <Value Profile="(Default)">https://wow.zamimg.com/images/wow/icons/large/{0}</Value>
     </Setting>
     <Setting Name="QuestWowheadURI" Type="System.String" Scope="User">
-      <Value Profile="(Default)">http://www.wowhead.com/?quest={0}</Value>
+      <Value Profile="(Default)">https://www.wowhead.com/wotlk/?quest={0}</Value>
     </Setting>
   </Settings>
 </SettingsFile>
