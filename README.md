@@ -1,4 +1,4 @@
-# JRawr Legacy Oracle Snapshot
+# JRawr Original Rawr Snapshot
 
 This repository is a development-only snapshot of the WotLK 3.3.5a Rawr reference
 implementation used to generate and verify JRawr's C# oracle. It is not the JRawr
@@ -11,10 +11,7 @@ application, it is not part of a JRawr release, and it is not intended for end u
 - Includes the local WotLK Classic integration commit
   `46f190bee32964cc8df5fe853d95b8a343f5aa23` (Wowhead/AoWoW parsing, Wine/Mono timeout and
   thread-pool fixes, rebuilt `Rawr.Base.dll`).
-- Adds the WotLK item, buff, enchant, filter and source caches used by the JRawr oracle, plus the
-  saved talent list required by the oracle tools.
-- Removes the upstream developer-notes `AGENTS.md`; the file remains visible in the history at
-  commit `46f190b`.
+- Adds the WotLK item, buff, enchant, filter and source caches used by the JRawr oracle.
 
 The working app remains the WinForms Rawr application. The snapshot exists so that a clean clone
 can rebuild the JRawr oracle tools and reproduce the committed golden JSON. Normal JRawr development
@@ -26,7 +23,7 @@ The JRawr oracle scripts expect this tree at `legacy/RAWR_WotLK_3.3.5a`, relativ
 checkout:
 
 ```bash
-git clone https://github.com/AdrianoBotti/JRawrLegacy.git \
+git clone https://github.com/AdrianoBotti/JRawrOriginalRawrSnapshot.git \
   JRawr/legacy/RAWR_WotLK_3.3.5a
 ```
 
@@ -36,7 +33,7 @@ Then follow the oracle instructions in JRawr's `oracle/README.md`. The tool scri
 ## Requirements
 
 - Linux with Mono (`mono`, `mcs`) for the C# oracle tools.
-- Wine is only needed to run the WinForms application itself, not to build the JrAwr oracle tools.
+- Wine is only needed to run the WinForms application itself, not to build the JRawr oracle tools.
 - The prebuilt DLLs under `bin/Release/Data` are included so the oracle does not need to rebuild
   the original WinForms application. See the upstream README in `README.upstream.md`.
 
