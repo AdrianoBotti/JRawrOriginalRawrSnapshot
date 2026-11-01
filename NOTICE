@@ -1,0 +1,41 @@
+JRawr Legacy Oracle Snapshot
+Copyright 2026 Adriano Botti and the JRawr contributors.
+
+This repository is a development-only snapshot of the WotLK 3.3.5a Rawr reference
+implementation used to generate and verify JRawr's C# oracle. It is not part of a
+JRawr runtime release.
+
+Original Rawr
+-------------
+Copyright 2008 Chadd Nervig, "HugeHoss", "Toskk", and the Rawr Developers.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+WotLK fork and local integration
+--------------------------------
+This snapshot is based on the RAWR_WotLK_3.3.5a fork maintained by Magmonix
+(https://github.com/Magmonix/RAWR_WotLK_3.3.5a), commit
+4f2bdc09e68a24b0efefab8830861ef6b44f8992. The local WotLK Classic integration,
+Wine/Mono fixes and rebuilt Rawr.Base.dll are commit
+46f190bee32964cc8df5fe853d95b8a343f5aa23 by Adriano Botti.
+
+Game data and trademarks
+------------------------
+World of Warcraft, Wrath of the Lich King and related names and assets are
+trademarks or property of Blizzard Entertainment. The item, spell, buff, icon
+and related game data in this repository belong to their respective owners and
+are included solely to make the reference calculator and its oracle usable.
+This project is not affiliated with or endorsed by Blizzard Entertainment.
+
+The Apache License 2.0 applies to the Rawr source code and documentation. It
+does not apply to Blizzard game data, names, icons or trademarks.

@@ -27,3 +27,11 @@ _ReSharper*/
 .svn/
 #Nuget packages folder
 packages/
+
+# JRawr oracle snapshot: local run artifacts and user files
+.idea/
+Rawrlog.txt
+bin/Release/Data/Rawrlog.txt
+mono_crash.*.blob
+wine-mono-*.msi
+yugas.xml
