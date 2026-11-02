@@ -4,6 +4,8 @@ This repository is a development-only snapshot of the WotLK 3.3.5a Rawr referenc
 implementation used to generate and verify JRawr's C# oracle. It is not the JRawr
 application, it is not part of a JRawr release, and it is not intended for end users.
 
+The JRawr application is at <https://github.com/AdrianoBotti/JRawr>.
+
 ## What this snapshot is
 
 - Based on the public fork [Magmonix/RAWR_WotLK_3.3.5a](https://github.com/Magmonix/RAWR_WotLK_3.3.5a),
@@ -27,8 +29,11 @@ git clone https://github.com/AdrianoBotti/JRawrOriginalRawrSnapshot.git \
   JRawr/legacy/RAWR_WotLK_3.3.5a
 ```
 
-Then follow the oracle instructions in JRawr's `oracle/README.md`. The tool scripts also accept
-`RAWR_LEGACY_DIR` when the checkout lives elsewhere.
+Then follow the oracle instructions in JRawr's
+[`oracle/README.md`](https://github.com/AdrianoBotti/JRawr/blob/master/oracle/README.md). The tool
+scripts also accept `RAWR_LEGACY_DIR` when the checkout lives elsewhere. The preferred setup is
+JRawr's `tools/setup-legacy.sh`, which clones this repository at the `jrawr-oracle-1` tag into the
+expected path.
 
 ## Requirements
 
